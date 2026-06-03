@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.command_mgr import CCommandMgr
+from app.core.updater import RESTART_EXIT_CODE
 from app.ws.client import SoilWSClient
 
 
@@ -23,6 +24,14 @@ def _make_client(**kwargs):
     )
     defaults.update(kwargs)
     return SoilWSClient(**defaults)
+
+
+class FakeUpgradeManager:
+    def __init__(self):
+        self.requests = []
+
+    def stage_and_launch(self, request):
+        self.requests.append(request)
 
 
 def _fake_sysinfo():
@@ -52,6 +61,10 @@ async def test_register_sends_api_key_on_first_connect():
 
     reg = messages_sent[0]
     assert reg["type"] == "REGISTER"
+    assert reg["version"] == "1"
+    assert reg["version_code"] == 1
+    assert reg["auto_upgrade"] is True
+    assert reg["upgrade_channel"] == "stable"
     assert reg["api_key"] == "test-api-key"
     assert "session_token" not in reg
     assert reg["hostname"] == "WIN-01"
@@ -115,3 +128,78 @@ async def test_pong_includes_sysinfo():
     assert pong["memory_percent"] == 60.0
     assert pong["disk_percent"] == 40.0
     assert pong["ip"] == "10.0.0.1"
+
+
+@pytest.mark.asyncio
+async def test_upgrade_available_drains_and_restarts_when_idle():
+    mgr = CCommandMgr(capacity=1)
+    upgrade_mgr = FakeUpgradeManager()
+    exit_codes = []
+    client = _make_client(
+        command_mgr=mgr,
+        upgrade_mgr=upgrade_mgr,
+        exit_func=exit_codes.append,
+    )
+    client.machine_id = "m-uuid-1"
+
+    messages_sent = []
+    ws = AsyncMock()
+    async def capture(msg): messages_sent.append(json.loads(msg))
+    ws.send = capture
+
+    await client._schedule_upgrade(ws, {
+        "type": "UPGRADE_AVAILABLE",
+        "version": "1.1.0",
+        "url": "https://example.com/modric-agent-1.1.0.whl",
+        "sha256": "abc123",
+    })
+    await client._upgrade_task
+
+    assert not mgr.is_accepting()
+    assert len(upgrade_mgr.requests) == 1
+    assert upgrade_mgr.requests[0].version == "1.1.0"
+    assert exit_codes == [RESTART_EXIT_CODE]
+    assert [m["type"] for m in messages_sent] == ["UPGRADE_STARTED", "UPGRADE_RESTARTING"]
+
+
+@pytest.mark.asyncio
+async def test_upgrade_rejects_new_execute_messages_while_draining():
+    mgr = CCommandMgr(capacity=1)
+    upgrade_mgr = FakeUpgradeManager()
+    client = _make_client(
+        command_mgr=mgr,
+        upgrade_mgr=upgrade_mgr,
+        exit_func=lambda code: None,
+    )
+    client.machine_id = "m-uuid-1"
+
+    messages_sent = []
+    ws = AsyncMock()
+    async def capture(msg): messages_sent.append(json.loads(msg))
+    ws.send = capture
+
+    registered_msg = json.dumps({
+        "type": "REGISTERED",
+        "machine_id": "m-uuid-1",
+        "session_token": "session-tok",
+    })
+    upgrade_msg = json.dumps({
+        "type": "UPGRADE_AVAILABLE",
+        "version": "1.1.0",
+        "url": "https://example.com/modric-agent-1.1.0.whl",
+    })
+    execute_msg = json.dumps({
+        "type": "EXECUTE",
+        "command_id": "c-1",
+        "script_type": 2,
+        "script_content": "print('should not run')",
+    })
+    ws.__aiter__ = MagicMock(return_value=async_iter([registered_msg, upgrade_msg, execute_msg]))
+
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+    await client._upgrade_task
+
+    rejected = next(m for m in messages_sent if m.get("type") == "COMMAND_REJECTED")
+    assert rejected["command_id"] == "c-1"
+    assert rejected["reason"] == "agent is upgrading"

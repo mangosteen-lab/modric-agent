@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from app.core.command_mgr import CCommandMgr
+from app.core.command_mgr import CCommandMgr, CommandRejectedError
 
 
 @pytest.fixture
@@ -85,3 +85,58 @@ def test_capacity_limits_parallel_commands():
     assert not second.is_alive()
     assert len(events) == 2
     assert events[1][1] - events[0][1] >= 0.3
+
+def test_drain_rejects_new_commands(mgr):
+    mgr.begin_drain()
+
+    with pytest.raises(CommandRejectedError):
+        mgr.run_and_stream(
+            command_id="c-drain",
+            script_type=2,
+            script_content="print('should not run')",
+            args=[],
+            timeout=5,
+            log_callback=lambda c, o: None,
+        )
+
+    mgr.resume()
+    assert mgr.is_accepting()
+
+def test_active_count_includes_queued_commands():
+    mgr = CCommandMgr(capacity=1)
+
+    first = threading.Thread(
+        target=lambda: mgr.run_and_stream(
+            command_id="c-first",
+            script_type=2,
+            script_content="import time; time.sleep(0.5)",
+            args=[],
+            timeout=5,
+            log_callback=lambda c, o: None,
+        ),
+        daemon=True,
+    )
+    second = threading.Thread(
+        target=lambda: mgr.run_and_stream(
+            command_id="c-second",
+            script_type=2,
+            script_content="print('queued')",
+            args=[],
+            timeout=5,
+            log_callback=lambda c, o: None,
+        ),
+        daemon=True,
+    )
+
+    first.start()
+    time.sleep(0.1)
+    second.start()
+    time.sleep(0.1)
+
+    assert mgr.active_count() == 2
+    assert not mgr.is_idle()
+
+    first.join(timeout=3)
+    second.join(timeout=3)
+
+    assert mgr.wait_until_idle(timeout=1)

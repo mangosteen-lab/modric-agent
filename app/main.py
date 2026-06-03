@@ -20,7 +20,8 @@ def main():
         api_key=cfg["api_key"],
         name=cfg["name"],
         capacity=cfg["capacity"],
-        version=cfg["version"],
+        auto_upgrade=cfg["auto_upgrade"],
+        upgrade_channel=cfg["upgrade_channel"],
         command_mgr=cmd_mgr,
     )
     logger.info("Starting Modric Agent - connecting to %s", cfg["wss_url"])
