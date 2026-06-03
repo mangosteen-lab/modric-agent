@@ -20,4 +20,19 @@ def load_config(path: str | None = None) -> dict:
         "capacity": int(agent_section.get("capacity", 10)),
         "auto_upgrade": agent_section.getboolean("auto_upgrade", fallback=True),
         "upgrade_channel": agent_section.get("upgrade_channel", "stable"),
+        "labels": parse_labels(agent_section.get("labels", "")),
     }
+
+
+def parse_labels(raw: str) -> dict[str, str]:
+    """Parse 'key=value, key2=value2' into a dict. Whitespace tolerant."""
+    labels: dict[str, str] = {}
+    for part in raw.replace("\n", ",").split(","):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        key, _, value = part.partition("=")
+        key, value = key.strip(), value.strip()
+        if key:
+            labels[key] = value
+    return labels

@@ -22,6 +22,7 @@ def main():
         capacity=cfg["capacity"],
         auto_upgrade=cfg["auto_upgrade"],
         upgrade_channel=cfg["upgrade_channel"],
+        labels=cfg["labels"],
         command_mgr=cmd_mgr,
     )
     logger.info("Starting Modric Agent - connecting to %s", cfg["wss_url"])

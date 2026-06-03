@@ -56,6 +56,7 @@ class SoilWSClient:
     def __init__(self, wss_url: str, api_key: str,
                  name: str, capacity: int, version: str | int | None = None,
                  auto_upgrade: bool = True, upgrade_channel: str = "stable",
+                 labels: dict[str, str] | None = None,
                  command_mgr: CCommandMgr | None = None,
                  upgrade_mgr: CUpgradeManager | None = None,
                  exit_func: Callable[[int], None] | None = None):
@@ -63,6 +64,7 @@ class SoilWSClient:
         self.api_key  = api_key
         self.name     = name
         self.capacity = capacity
+        self.labels   = labels or {}
         raw_version = version if version is not None else get_agent_version()
         self.version  = str(raw_version)
         self.version_code = version_to_code(raw_version)
@@ -99,6 +101,7 @@ class SoilWSClient:
             "upgrade_channel": self.upgrade_channel,
             "name":            self.name,
             "capacity":        self.capacity,
+            "labels":          self.labels,
             **sysinfo,
         }
         if self.session_token:
