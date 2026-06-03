@@ -18,5 +18,6 @@ def load_config(path: str | None = None) -> dict:
         "api_key": cfg["toil"]["api_key"],
         "name": agent_section.get("name", ""),
         "capacity": int(agent_section.get("capacity", 10)),
-        "version": int(agent_section.get("version", 1)),
+        "auto_upgrade": agent_section.getboolean("auto_upgrade", fallback=True),
+        "upgrade_channel": agent_section.get("upgrade_channel", "stable"),
     }
