@@ -1,4 +1,5 @@
 from importlib import metadata
+from pathlib import Path
 
 PACKAGE_NAME = "modric-agent"
 DEFAULT_VERSION = "0.0.0"
@@ -8,7 +9,18 @@ def get_agent_version() -> str:
     try:
         return metadata.version(PACKAGE_NAME)
     except metadata.PackageNotFoundError:
-        return DEFAULT_VERSION
+        # Running from source (not pip-installed) — read version from pyproject.toml
+        return _version_from_pyproject() or DEFAULT_VERSION
+
+
+def _version_from_pyproject() -> str | None:
+    try:
+        import tomllib  # stdlib in Python 3.11+
+        root = Path(__file__).resolve().parents[2]  # app/core/version.py -> repo root
+        data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        return data.get("project", {}).get("version")
+    except Exception:
+        return None
 
 
 def version_to_code(version: str | int) -> int:
