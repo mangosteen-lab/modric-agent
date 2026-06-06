@@ -203,3 +203,41 @@ async def test_upgrade_rejects_new_execute_messages_while_draining():
     rejected = next(m for m in messages_sent if m.get("type") == "COMMAND_REJECTED")
     assert rejected["command_id"] == "c-1"
     assert rejected["reason"] == "agent is upgrading"
+
+
+@pytest.mark.asyncio
+async def test_handle_execute_buffers_result_when_socket_closed():
+    import websockets
+    cmd = MagicMock(spec=CCommandMgr)
+    cmd.run_and_stream.return_value = 0
+    client = _make_client(command_mgr=cmd)
+    client.machine_id = "m-1"
+
+    ws = AsyncMock()
+    ws.send.side_effect = websockets.ConnectionClosed(None, None)
+
+    await client._handle_execute(ws, {
+        "command_id": "c-9", "script_type": 3,
+        "script_content": "echo hi", "args": [], "timeout": 5,
+    })
+
+    assert "c-9" in client._pending_results
+    assert client._pending_results["c-9"]["exit_code"] == 0
+    assert client._pending_results["c-9"]["status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_flush_pending_results_redelivers_and_clears():
+    client = _make_client()
+    client.machine_id = "m-new"
+    client._pending_results = {
+        "c-9": {"type": "COMMAND_DONE", "command_id": "c-9",
+                "machine_id": "m-old", "exit_code": 0, "status": "COMPLETED"},
+    }
+    ws = AsyncMock()
+    await client._flush_pending_results(ws)
+
+    assert client._pending_results == {}
+    sent = json.loads(ws.send.await_args.args[0])
+    assert sent["command_id"] == "c-9"
+    assert sent["machine_id"] == "m-new"   # refreshed to the current session

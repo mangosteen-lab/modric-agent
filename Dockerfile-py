@@ -1,0 +1,46 @@
+# Modric Agent — Python 3.12 container image.
+#
+# Build:  docker build -f Dockerfile-py -t modric-agent:latest .
+#
+# Configure via environment (rendered to config.ini by app.bootstrap):
+#   docker run -d --name modric-agent \
+#     -e MODRIC_TOIL_WSS_URL=ws://toil-host:8000/ws/soil \
+#     -e MODRIC_TOIL_API_KEY=<api-key> \
+#     -e MODRIC_AGENT_NAME=aba-agent-1 \
+#     -e MODRIC_AGENT_LABELS="template=LINUX_ABA, os=linux" \
+#     modric-agent:latest
+#
+# ...or mount a config file instead:
+#   docker run -d -v "$(pwd)/conf/config.ini:/app/conf/config.ini:ro" modric-agent:latest
+#
+# The agent connects OUTBOUND to Toil over a WebSocket, so no ports need to be
+# published. The api_key is never baked into the image.
+FROM python:3.12-slim
+
+# Tooling the agent's Linux job scripts commonly need (bash to run shell steps,
+# curl/jq for the mstr-dev-helper calls, git for checkouts). Extend as needed.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash ca-certificates curl git jq \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Runtime dependencies — kept in sync with pyproject.toml [project.dependencies].
+RUN pip install --no-cache-dir \
+        "websockets==12.0" \
+        "PyJWT==2.8.0" \
+        "cryptography==42.0.7" \
+        "psutil>=5.9"
+
+# Application source. pyproject.toml is required at /app so version.py can report
+# the agent version (it reads it from there when the package isn't pip-installed).
+COPY pyproject.toml ./
+COPY app ./app
+COPY conf/config.example.ini ./conf/config.example.ini
+
+# Logs go to stdout/stderr; unbuffered so `docker logs` is live.
+ENV PYTHONUNBUFFERED=1 \
+    MODRIC_AGENT_CONFIG=/app/conf/config.ini
+
+# Bootstrap renders config.ini from env vars (if provided), then runs the agent.
+CMD ["python", "-m", "app.bootstrap"]

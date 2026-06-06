@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.git/
+tests/
+# never bake the real config (api_key) into the image — mount it at runtime
+conf/config.ini

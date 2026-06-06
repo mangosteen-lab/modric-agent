@@ -76,13 +76,23 @@ class SoilWSClient:
         self._upgrade_mgr = upgrade_mgr or CUpgradeManager(enabled=auto_upgrade)
         self._exit_func = exit_func or _raise_system_exit
         self._upgrade_task: asyncio.Task | None = None
+        # COMMAND_DONE results that couldn't be sent because the socket dropped;
+        # re-delivered after the next successful REGISTER.
+        self._pending_results: dict[str, dict] = {}
 
     async def run(self):
         """Outer reconnect loop. Never returns."""
         delay = RECONNECT_BASE
         while True:
             try:
-                async with websockets.connect(self.wss_url) as ws:
+                # ping_timeout is generous so a transient backlog (heavy build
+                # output / server persistence) doesn't drop the connection.
+                async with websockets.connect(
+                    self.wss_url,
+                    ping_interval=20,
+                    ping_timeout=60,
+                    max_queue=256,
+                ) as ws:
                     logger.info("Connected to Toil at %s", self.wss_url)
                     delay = RECONNECT_BASE
                     await self._do_session(ws)
@@ -119,6 +129,8 @@ class SoilWSClient:
                 self.machine_id    = msg["machine_id"]
                 self.session_token = msg.get("session_token") or None
                 logger.info("Registered as machine_id=%s", self.machine_id)
+                if self._pending_results:
+                    await self._flush_pending_results(ws)
 
             elif msg_type == "PING":
                 sysinfo = _collect_sysinfo()
@@ -171,14 +183,39 @@ class SoilWSClient:
         except CommandRejectedError as exc:
             await self._send_command_rejected(ws, msg, str(exc))
             return
+        except Exception:
+            logger.exception("Command %s crashed in the agent", command_id)
+            return
 
-        await ws.send(json.dumps({
+        result = {
             "type":       "COMMAND_DONE",
             "command_id": command_id,
             "machine_id": self.machine_id,
             "exit_code":  exit_code,
             "status":     "COMPLETED" if exit_code == 0 else "FAILED",
-        }))
+        }
+        try:
+            await ws.send(json.dumps(result))
+        except websockets.ConnectionClosed:
+            # Connection dropped while the command ran. Buffer the result and
+            # re-deliver it after the next reconnect (the server keeps the command
+            # pending across reconnects), so the step's outcome isn't lost.
+            self._pending_results[command_id] = result
+            logger.warning(
+                "Connection closed before COMMAND_DONE for %s (exit=%s); "
+                "buffered for re-delivery on reconnect", command_id, exit_code,
+            )
+
+    async def _flush_pending_results(self, ws):
+        """Re-deliver COMMAND_DONE results buffered while disconnected."""
+        for command_id, result in list(self._pending_results.items()):
+            result["machine_id"] = self.machine_id
+            try:
+                await ws.send(json.dumps(result))
+            except websockets.ConnectionClosed:
+                return  # try again on the next reconnect
+            self._pending_results.pop(command_id, None)
+            logger.info("Re-delivered result for command %s after reconnect", command_id)
 
     def _run_and_stream_sync(self, ws, loop, command_id, script_type,
                               script_content, args, timeout):
