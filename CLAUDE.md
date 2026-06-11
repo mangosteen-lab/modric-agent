@@ -1,0 +1,49 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+`modric-agent` is the **Soil worker** for the Modric CI system. It connects **outbound** to the Toil
+backend over a WebSocket, registers the local machine, receives `EXECUTE`/`KILL` commands, runs
+scripts, and streams logs + status back. The backend lives in the sibling `modric` repo
+(`modric/Toil/app/ws/soil_ws.py` is the server side of the protocol below).
+
+## Commands
+
+Uses **`uv`** (not a `.venv/bin` layout). All targets in the `Makefile`:
+```bash
+make sync          # uv sync --extra dev
+make run           # uv run python -m app.main
+make test          # uv run pytest tests -v
+make lint          # uv run ruff check .   (line-length 100, E/F/I)
+uv run pytest tests/test_x.py::test_name   # single test (asyncio_mode = auto)
+```
+Config comes from `conf/config.ini` (copy `conf/config.example.ini`) or `MODRIC_AGENT_CONFIG`.
+Container builds (`Dockerfile-py`) render `config.ini` from `MODRIC_*` env vars via `app/bootstrap.py`.
+
+## Architecture
+
+`app/main.py` → `app/ws/client.py` opens the WebSocket to `[toil] wss_url`, authenticates with
+`[toil] api_key`, and runs the receive loop. Flow:
+
+1. **Register** — send the machine's name, capacity, OS, version, and labels (used by Toil for
+   label-selector machine reservation). Stays connected with periodic heartbeats.
+2. **Execute** — on an `EXECUTE`, `app/core/command_mgr.py` (`CCommandMgr`) admits the command up to
+   `[agent] capacity`, then `app/core/run_script.py` (`CRunScriptCommand`) writes the script to a temp
+   file and runs it by `EScriptType` (`app/core/command.py`: BAT / PYTHON / SHELL / POWERSHELL),
+   streaming stdout/stderr back as log `CHUNK`s and finishing with `COMMAND_DONE` (exit code + status).
+3. **Kill** — terminates a running command by id.
+4. **Self-upgrade** — `app/core/updater.py` handles an upgrade request when `[agent] auto_upgrade`
+   is on; a successful upgrade exits with code **75** so a supervisor/`--restart` relaunches the agent.
+
+## Protocol contract (keep in sync with Toil)
+
+The message types and field names (`REGISTER`, `EXECUTE`, `CHUNK`, `COMMAND_DONE`, `KILL`, command
+ids, script types) are a contract with `modric/Toil/app/ws/soil_ws.py` and
+`modric/Toil/app/core/remote_execute.py`. Change both sides together.
+
+## Notes
+
+- The agent connects outbound only — no inbound ports. Use a Toil URL reachable from the machine
+  (not `localhost` inside a container).
+- The Linux container image ships `bash`, `curl`, `git`, `jq`; `.bat` steps require a Windows host.
+- End commit messages with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
