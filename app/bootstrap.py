@@ -41,6 +41,10 @@ def render_config() -> bool:
         "labels": os.getenv("MODRIC_AGENT_LABELS", ""),
     }
     cfg["toil"] = {"wss_url": wss_url, "api_key": api_key}
+    cfg["logging"] = {
+        "file": os.getenv("MODRIC_AGENT_LOG_FILE", "logs/agent.log"),
+        "level": os.getenv("MODRIC_AGENT_LOG_LEVEL", "INFO"),
+    }
 
     path = Path(os.getenv("MODRIC_AGENT_CONFIG", "conf/config.ini"))
     path.parent.mkdir(parents=True, exist_ok=True)

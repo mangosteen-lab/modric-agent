@@ -1,4 +1,4 @@
-.PHONY: help sync run test lint lint-fix docker-build docker-run docker-run-env docker-logs docker-stop
+.PHONY: help sync run test lint lint-fix install-service uninstall-service docker-build docker-run docker-run-env docker-logs docker-stop
 
 # Container image / name (override: make docker-build IMAGE=foo:1.2.3)
 IMAGE ?= modric-agent:latest
@@ -13,6 +13,9 @@ help:
 	@echo "  test          Run Modric Agent tests"
 	@echo "  lint          Lint Modric Agent with ruff"
 	@echo "  lint-fix      Auto-fix Soil lint issues"
+	@echo "  install-service    Install the agent as an OS service (sudo/admin)"
+	@echo "  uninstall-service  Remove the agent OS service"
+	@echo "  build          Build a release wheel + print its sha256 (for self-upgrade)"
 	@echo "  docker-build   Build the container image ($(IMAGE))"
 	@echo "  docker-run     Run the agent in a container (mounts $(CONFIG))"
 	@echo "  docker-run-env Run the agent, configured from MODRIC_* env vars"
@@ -33,6 +36,25 @@ lint: sync
 
 lint-fix: sync
 	uv run ruff check --fix .
+
+# Install/remove the agent as an OS service (systemd / launchd / Windows task).
+# On Linux/macOS this typically needs elevation, e.g. `sudo make install-service`.
+install-service: sync
+	uv run python -m app.main service install
+
+uninstall-service:
+	uv run python -m app.main service uninstall
+
+# Build a distributable wheel and print its sha256 (the values to wire into Toil's
+# [soil] upgrade_artifact_url + upgrade_artifact_sha256). Bump version in pyproject.toml first.
+build:
+	rm -rf dist
+	uv build --wheel
+	@echo "Built artifacts (host at an HTTPS URL, then set Toil [soil] latest_version/url/sha256):"
+	@for f in dist/*.whl; do \
+		echo "  $$f"; \
+		echo "  sha256 = $$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$$f")"; \
+	done
 
 docker-build:
 	docker build -f Dockerfile-py -t $(IMAGE) .

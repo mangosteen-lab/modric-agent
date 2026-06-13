@@ -1,0 +1,32 @@
+name: release
+
+# Tagging a version (e.g. `git tag v1.1.0 && git push --tags`) builds the agent wheel,
+# computes its sha256, and publishes both to a GitHub Release. Point Toil's
+# [soil] upgrade_artifact_url at the wheel asset and upgrade_artifact_sha256 at the digest,
+# then bump [soil] latest_version — connected agents with auto_upgrade on will self-upgrade.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Build wheel
+        run: uv build --wheel
+      - name: Compute checksums
+        run: |
+          cd dist
+          sha256sum *.whl | tee SHA256SUMS
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.whl
+            dist/SHA256SUMS
+          generate_release_notes: true

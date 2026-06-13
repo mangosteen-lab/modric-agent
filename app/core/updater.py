@@ -157,6 +157,13 @@ def main(argv: list[str] | None = None) -> int:
         time.sleep(0.5)
         _install_artifact(Path(args.artifact))
         logger.info("Installed Modric Agent %s", args.target_version)
+        # Restart the agent so the new code is loaded. No-op if it isn't managed as a
+        # service (then the supervisor / container restart policy relaunches it).
+        try:
+            from app.service import restart_after_upgrade
+            restart_after_upgrade()
+        except Exception as exc:
+            logger.warning("Post-upgrade restart skipped: %s", exc)
         return 0
     except Exception as exc:
         logger.error("Upgrade failed: %s", exc)

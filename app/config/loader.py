@@ -13,6 +13,15 @@ def load_config(path: str | None = None) -> dict:
         )
 
     agent_section = cfg["agent"] if cfg.has_section("agent") else cfg["soil"]
+
+    log_file = "logs/agent.log"
+    log_level = "INFO"
+    if cfg.has_section("logging"):
+        log_file = cfg["logging"].get("file", log_file)
+        log_level = cfg["logging"].get("level", log_level)
+    log_file = os.getenv("MODRIC_AGENT_LOG_FILE", log_file)
+    log_level = os.getenv("MODRIC_AGENT_LOG_LEVEL", log_level)
+
     return {
         "wss_url": cfg["toil"]["wss_url"],
         "api_key": cfg["toil"]["api_key"],
@@ -21,6 +30,8 @@ def load_config(path: str | None = None) -> dict:
         "auto_upgrade": agent_section.getboolean("auto_upgrade", fallback=True),
         "upgrade_channel": agent_section.get("upgrade_channel", "stable"),
         "labels": parse_labels(agent_section.get("labels", "")),
+        "log_file": log_file,
+        "log_level": log_level,
     }
 
 

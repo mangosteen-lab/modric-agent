@@ -101,6 +101,78 @@ Notes:
 - `auto_upgrade` defaults to `false` in containers — redeploy a new image instead. If you enable it, run under `--restart unless-stopped`/an orchestrator so the agent restarts after a successful upgrade (exit code `75`).
 - Logs stream to stdout/stderr — view with `docker logs -f modric-agent`.
 
+## Run as a service (Linux / macOS / Windows)
+
+Install the agent so it starts on boot and is restarted if it exits (including the
+auto-upgrade exit code `75`):
+
+```bash
+sudo make install-service      # Linux (systemd) / macOS (launchd)
+make uninstall-service
+
+# equivalently, directly:
+python -m app.main service install      # install + start
+python -m app.main service start|stop|status|uninstall
+```
+
+- **Linux** — a systemd unit at `/etc/systemd/system/modric-agent.service` (`Restart=always`).
+- **macOS** — a launchd job (`~/Library/LaunchAgents/com.microstrategy.modric-agent.plist`,
+  or `/Library/LaunchDaemons` when run as root), `KeepAlive`.
+- **Windows** — a Scheduled Task that runs at startup (run from an elevated prompt). For
+  auto-restart on crash, run the agent under NSSM instead.
+
+The service runs the current Python with `conf/config.ini` (override the path with
+`MODRIC_AGENT_CONFIG`).
+
+## Logging
+
+The agent logs to a rotating file **and** the console at level **INFO** by default. Configure
+via `conf/config.ini` (or env):
+
+```ini
+[logging]
+file = logs/agent.log
+level = INFO          # DEBUG / INFO / WARNING / ERROR
+```
+
+`MODRIC_AGENT_LOG_FILE` / `MODRIC_AGENT_LOG_LEVEL` override these (and are rendered into the
+container config by `app/bootstrap.py`).
+
+## Self-upgrade: publishing a new version
+
+Agents upgrade by downloading a **published wheel**, not by pulling git. A `git push` alone
+does nothing to running agents. To ship new code:
+
+1. **Bump** `version` in `pyproject.toml` (must be higher — Toil only offers a newer version).
+2. **Build + publish** the wheel at an HTTPS URL and note its sha256:
+   ```bash
+   make build        # builds dist/*.whl and prints the sha256
+   ```
+   Or push a tag (`git tag v1.1.0 && git push --tags`) — `.github/workflows/release.yml`
+   builds the wheel + `SHA256SUMS` and attaches them to a GitHub Release.
+3. **Point Toil at it** — in the Toil server's `conf/config.ini [soil]`:
+   `latest_version`, `upgrade_artifact_url` (the wheel URL), `upgrade_artifact_sha256`,
+   and a matching `upgrade_channel`.
+4. Agents with `auto_upgrade = true` and the matching channel pick it up within a few minutes.
+
+### What happens on the agent (and how it restarts)
+
+`app/core/updater.py` drains in-flight work, downloads + sha256-verifies the wheel, launches a
+**detached installer**, and the agent **exits with code 75**. The installer waits for the old
+process to exit, runs `pip install --upgrade <wheel>`, then **restarts the agent**:
+
+- It calls `app/service.py::restart_after_upgrade()`, which restarts the OS service it's managed
+  by (`systemctl restart` / `launchctl kickstart -k` / `schtasks /run`).
+- The supervisor's own policy is the **fallback** (systemd `Restart=always`, launchd `KeepAlive`,
+  container `--restart`). The systemd unit uses `KillMode=process` so the detached installer
+  survives the agent's exit.
+
+So **the agent must be installed as a service (or run under a restart-enabled supervisor/container)**
+for self-upgrade to relaunch it — see "Run as a service" above. Running it by hand will simply exit
+75 on upgrade and stop, leaving you to start it again. Also note: the wheel install only takes effect
+for **pip-installed** deployments; a raw `git clone` + `python -m app.main` won't be replaced by the
+wheel (use a deploy that pulls + restarts instead).
+
 ## Test and Lint
 
 ```bash
