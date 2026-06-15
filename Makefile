@@ -28,8 +28,8 @@ sync:
 run: sync
 	uv run python -m app.main
 
-test: sync
-	uv run pytest tests -v --tb=short
+test:
+	uv run --frozen --extra dev python -m pytest tests -v --tb=short
 
 lint: sync
 	uv run ruff check .
