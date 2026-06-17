@@ -2,6 +2,7 @@
 restarted if it exits (including self-upgrade exit code 75).
 
   python -m app.main service install     # register + start
+  python -m app.main service install-interactive  # Windows: run in the console desktop (GUI steps)
   python -m app.main service uninstall
   python -m app.main service start|stop|status
 
@@ -61,7 +62,10 @@ def dispatch(action: str) -> None:
     impl = _impl()
     if impl is None:
         raise SystemExit(f"Unsupported OS for service install: {platform.system()}")
-    getattr(impl(), action)()
+    method = getattr(impl(), action.replace("-", "_"), None)
+    if method is None:
+        raise SystemExit(f"'{action}' is not supported on {platform.system()}")
+    method()
 
 
 def restart_after_upgrade() -> None:
@@ -238,6 +242,35 @@ class _Windows:
     def uninstall(self) -> None:
         _run(["schtasks", "/end", "/tn", SERVICE_NAME])
         _run(["schtasks", "/delete", "/tn", SERVICE_NAME, "/f"])
+
+    def install_interactive(self) -> None:
+        # A Scheduled Task / Windows service runs in the non-interactive Session 0,
+        # which has no desktop — so steps that open a GUI (e.g. a Java UI app) fail.
+        # Instead, run the agent inside a real logged-in *console* desktop: remove the
+        # Session-0 task, then drop a launcher in the current user's Startup folder that
+        # runs StartModricAgent.bat on logon. Pair with Autologon so the box logs into
+        # the console unattended on boot (see the printed steps below).
+        if self.installed():
+            self.uninstall()
+        startup = (Path(os.environ["APPDATA"]) / "Microsoft" / "Windows"
+                   / "Start Menu" / "Programs" / "Startup")
+        launcher = ROOT / "StartModricAgent.bat"
+        if not launcher.exists():
+            raise SystemExit(f"Missing {launcher} — expected it in the agent directory.")
+        # %~dp0 inside StartModricAgent.bat resolves to its own (agent) directory even
+        # when invoked from Startup, so the stub just calls it by absolute path.
+        _write(startup / "StartModricAgent.bat",
+               f'@echo off\r\ncall "{launcher}"\r\n')
+        print(
+            "\nInstalled the interactive Startup launcher. To make it fully unattended:\n"
+            "  1. Configure Autologon for the worker account so the box logs into the\n"
+            "     CONSOLE desktop on boot (Sysinternals Autologon64.exe).\n"
+            "  2. Reboot. The agent starts in the console desktop on logon and GUI\n"
+            "     steps get a real desktop.\n"
+            "  3. Do NOT RDP into that same account afterwards — it steals the desktop\n"
+            "     from the console. If you must, run `tscon <id> /dest:console` before\n"
+            "     disconnecting to hand the desktop back."
+        )
 
     def start(self) -> None:
         _run(["schtasks", "/run", "/tn", SERVICE_NAME], check=True)

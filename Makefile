@@ -1,4 +1,4 @@
-.PHONY: help sync run test lint lint-fix install uninstall status docker-build docker-run docker-run-env docker-logs docker-stop
+.PHONY: help sync run test lint lint-fix install install-interactive uninstall status docker-build docker-run docker-run-env docker-logs docker-stop
 
 # Container image / name (override: make docker-build IMAGE=foo:1.2.3)
 IMAGE ?= modric-agent:latest
@@ -14,6 +14,7 @@ help:
 	@echo "  lint          Lint Modric Agent with ruff"
 	@echo "  lint-fix      Auto-fix Soil lint issues"
 	@echo "  install        Install the agent as an OS service (sudo/admin)"
+	@echo "  install-interactive  Windows: run in the console desktop on logon (GUI steps)"
 	@echo "  uninstall      Remove the agent OS service"
 	@echo "  status         Show the agent OS service status"
 	@echo "  build          Build a release wheel + print its sha256 (for self-upgrade)"
@@ -42,6 +43,11 @@ lint-fix: sync
 # On Linux/macOS this typically needs elevation, e.g. `sudo make install`.
 install: sync
 	uv run python -m app.main service install
+
+# Windows GUI hosts: don't run in Session 0. Remove the service and run the agent
+# inside the logged-in console desktop via StartModricAgent.bat (+ Autologon).
+install-interactive: sync
+	uv run python -m app.main service install-interactive
 
 uninstall:
 	uv run python -m app.main service uninstall

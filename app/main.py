@@ -33,7 +33,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="modric-agent", description="Modric Soil worker")
     sub = parser.add_subparsers(dest="command")
     svc = sub.add_parser("service", help="install/manage the agent as an OS service")
-    svc.add_argument("action", choices=["install", "uninstall", "start", "stop", "status"])
+    svc.add_argument("action", choices=["install", "install-interactive",
+                                        "uninstall", "start", "stop", "status"])
     args = parser.parse_args()
 
     if args.command == "service":
