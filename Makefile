@@ -1,4 +1,4 @@
-.PHONY: help sync run test lint lint-fix install-service uninstall-service docker-build docker-run docker-run-env docker-logs docker-stop
+.PHONY: help sync run test lint lint-fix install uninstall status docker-build docker-run docker-run-env docker-logs docker-stop
 
 # Container image / name (override: make docker-build IMAGE=foo:1.2.3)
 IMAGE ?= modric-agent:latest
@@ -13,8 +13,9 @@ help:
 	@echo "  test          Run Modric Agent tests"
 	@echo "  lint          Lint Modric Agent with ruff"
 	@echo "  lint-fix      Auto-fix Soil lint issues"
-	@echo "  install-service    Install the agent as an OS service (sudo/admin)"
-	@echo "  uninstall-service  Remove the agent OS service"
+	@echo "  install        Install the agent as an OS service (sudo/admin)"
+	@echo "  uninstall      Remove the agent OS service"
+	@echo "  status         Show the agent OS service status"
 	@echo "  build          Build a release wheel + print its sha256 (for self-upgrade)"
 	@echo "  docker-build   Build the container image ($(IMAGE))"
 	@echo "  docker-run     Run the agent in a container (mounts $(CONFIG))"
@@ -37,13 +38,16 @@ lint: sync
 lint-fix: sync
 	uv run ruff check --fix .
 
-# Install/remove the agent as an OS service (systemd / launchd / Windows task).
-# On Linux/macOS this typically needs elevation, e.g. `sudo make install-service`.
-install-service: sync
+# Install/remove/inspect the agent as an OS service (systemd / launchd / Windows task).
+# On Linux/macOS this typically needs elevation, e.g. `sudo make install`.
+install: sync
 	uv run python -m app.main service install
 
-uninstall-service:
+uninstall:
 	uv run python -m app.main service uninstall
+
+status:
+	uv run python -m app.main service status
 
 # Build a distributable wheel and print its sha256 (the values to wire into Toil's
 # [soil] upgrade_artifact_url + upgrade_artifact_sha256). Bump version in pyproject.toml first.
