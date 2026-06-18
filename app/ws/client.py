@@ -11,7 +11,7 @@ import websockets
 
 from app.core.command_mgr import CCommandMgr, CommandRejectedError
 from app.core.updater import RESTART_EXIT_CODE, CUpgradeManager, CUpgradeRequest
-from app.core.version import get_agent_version, version_to_code
+from app.core.version import get_agent_commit, get_agent_version, version_to_code
 
 logger = logging.getLogger("modric_agent.ws")
 
@@ -68,6 +68,7 @@ class SoilWSClient:
         raw_version = version if version is not None else get_agent_version()
         self.version  = str(raw_version)
         self.version_code = version_to_code(raw_version)
+        self.commit   = get_agent_commit()
         self.auto_upgrade = auto_upgrade
         self.upgrade_channel = upgrade_channel
         self.machine_id: str | None    = None
@@ -107,6 +108,7 @@ class SoilWSClient:
             "type":            "REGISTER",
             "version":         self.version,
             "version_code":    self.version_code,
+            "commit":          self.commit,
             "auto_upgrade":    self.auto_upgrade,
             "upgrade_channel": self.upgrade_channel,
             "name":            self.name,

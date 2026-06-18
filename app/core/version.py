@@ -1,8 +1,33 @@
+import os
+import subprocess
 from importlib import metadata
 from pathlib import Path
 
 PACKAGE_NAME = "modric-agent"
 DEFAULT_VERSION = "0.0.0"
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]  # app/core/version.py -> repo root
+
+
+def get_agent_commit() -> str:
+    """Short git commit the agent is running, for display in Toil's machines view.
+
+    Resolution order: the MODRIC_AGENT_COMMIT env var (e.g. baked in at build time),
+    then `git rev-parse --short HEAD` when running from a checkout. Empty string if
+    neither is available (e.g. a pip-installed wheel with no git)."""
+    env = os.getenv("MODRIC_AGENT_COMMIT")
+    if env:
+        return env.strip()
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=_REPO_ROOT, capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return ""
 
 
 def get_agent_version() -> str:
