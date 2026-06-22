@@ -177,7 +177,7 @@ class SoilWSClient:
 
         try:
             loop = asyncio.get_event_loop()
-            exit_code = await loop.run_in_executor(
+            exit_code, timed_out = await loop.run_in_executor(
                 None,
                 self._run_and_stream_sync,
                 ws, loop, command_id, script_type, script_content, args, timeout,
@@ -195,7 +195,16 @@ class SoilWSClient:
             "machine_id": self.machine_id,
             "exit_code":  exit_code,
             "status":     "COMPLETED" if exit_code == 0 else "FAILED",
+            # Why the command failed, so the server can surface it (e.g. in
+            # NotifyMessage). `timed_out` distinguishes an exceeded-timeout kill from
+            # a non-zero exit; `error` is a human-readable reason. Optional fields —
+            # an older server simply ignores them.
+            "timed_out":  timed_out,
         }
+        if timed_out:
+            result["error"] = f"timed out after {timeout}s and was killed"
+        elif exit_code != 0:
+            result["error"] = f"exited with code {exit_code}"
         try:
             await ws.send(json.dumps(result))
         except websockets.ConnectionClosed:

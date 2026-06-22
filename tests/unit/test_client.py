@@ -209,7 +209,7 @@ async def test_upgrade_rejects_new_execute_messages_while_draining():
 async def test_handle_execute_buffers_result_when_socket_closed():
     import websockets
     cmd = MagicMock(spec=CCommandMgr)
-    cmd.run_and_stream.return_value = 0
+    cmd.run_and_stream.return_value = (0, False)
     client = _make_client(command_mgr=cmd)
     client.machine_id = "m-1"
 

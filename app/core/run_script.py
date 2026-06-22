@@ -41,6 +41,9 @@ class CRunScriptCommand:
         self._log_callback  = log_callback
         self._process: subprocess.Popen | None = None
         self._killed        = False
+        # Set only when we kill the process because it ran past `timeout`, so the
+        # COMMAND_DONE can distinguish a timeout from a manual KILL (both exit -1).
+        self.timed_out      = False
 
     def run(self) -> int:
         ext = EXT_MAP[self.script_type]
@@ -92,6 +95,7 @@ class CRunScriptCommand:
             try:
                 self._process.wait(timeout=self.timeout)
             except subprocess.TimeoutExpired:
+                self.timed_out = True
                 self.kill()
                 self._process.wait()
             stream_thread.join(timeout=1)

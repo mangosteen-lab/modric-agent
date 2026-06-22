@@ -15,7 +15,7 @@ def test_run_python_script(mgr):
     def on_log(chunk, offset):
         log_lines.append(chunk)
 
-    exit_code = mgr.run_and_stream(
+    exit_code, timed_out = mgr.run_and_stream(
         command_id="c-1",
         script_type=2,        # PYTHON
         script_content="print('hello modric-agent')",
@@ -24,6 +24,7 @@ def test_run_python_script(mgr):
         log_callback=on_log,
     )
     assert exit_code == 0
+    assert timed_out is False
     assert any("hello modric-agent" in line for line in log_lines)
 
 def test_kill_running_command(mgr):
@@ -40,13 +41,15 @@ def test_kill_running_command(mgr):
     time.sleep(0.5)
     mgr.kill("c-2")
     t.join(timeout=5)
-    # killed process returns non-zero exit code
+    # killed process returns non-zero exit code, but a manual kill is not a timeout
     assert results.get("exit") is not None
-    assert results.get("exit") != 0
+    exit_code, timed_out = results["exit"]
+    assert exit_code != 0
+    assert timed_out is False
 
 def test_timeout_kills_running_command(mgr):
     started = time.monotonic()
-    exit_code = mgr.run_and_stream(
+    exit_code, timed_out = mgr.run_and_stream(
         command_id="c-timeout",
         script_type=2,
         script_content="import time; print('started', flush=True); time.sleep(30)",
@@ -56,6 +59,7 @@ def test_timeout_kills_running_command(mgr):
     )
 
     assert exit_code != 0
+    assert timed_out is True
     assert time.monotonic() - started < 5
 
 def test_capacity_limits_parallel_commands():

@@ -22,7 +22,9 @@ class CCommandMgr:
     def run_and_stream(self, command_id: str, script_type: int,
                        script_content: str, args: list, timeout: int,
                        log_callback: Callable,
-                       started_callback: Callable | None = None) -> int:
+                       started_callback: Callable | None = None) -> tuple[int, bool]:
+        """Run the script and return (exit_code, timed_out). `timed_out` is True only
+        when the agent killed the process for exceeding `timeout` (vs a manual KILL)."""
         with self._idle:
             if not self._accepting:
                 raise CommandRejectedError("agent is draining")
@@ -44,7 +46,8 @@ class CCommandMgr:
                 self._commands[command_id] = cmd
             if started_callback:
                 started_callback()
-            return cmd.run()
+            exit_code = cmd.run()
+            return exit_code, cmd.timed_out
         finally:
             with self._idle:
                 self._commands.pop(command_id, None)
