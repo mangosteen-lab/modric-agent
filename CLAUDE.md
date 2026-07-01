@@ -34,10 +34,14 @@ Container builds (`Dockerfile-py`) render `config.ini` from `MODRIC_*` env vars 
 3. **Kill** — terminates a running command by id.
 4. **Self-upgrade** — `app/core/updater.py` handles an upgrade request when `[agent] auto_upgrade`
    is on; a successful upgrade exits with code **75** so a supervisor/`--restart` relaunches the agent.
-   The artifact may be a **wheel** (pip-installed) or a **source tarball/zip** (extracted over the
-   agent dir — preserving `conf/config.ini`, `.venv`, `logs`, `state` — then `uv sync`). Toil's
-   machines panel can trigger a **forced** upgrade per machine (`force` bypasses the auto_upgrade gate;
-   `make release-tarball` builds the source archive to host + point `[soil] upgrade_artifact_url` at).
+   A **wheel** is pip-installed by a detached installer *after* we exit (logs to `logs/upgrade.log`).
+   A **source tarball/zip** is applied **in-process before exit** (`stage_and_apply_source`) — extracted
+   over the agent dir preserving `conf/config.ini`, `.venv`, `logs`, `state`, then `uv sync` — so the new
+   files are on disk before the supervisor relaunches (no race). Toil's machines panel can trigger a
+   **forced** upgrade per machine (`force` bypasses the auto_upgrade gate; `make release-tarball` builds
+   the source archive to host + point `[soil] upgrade_artifact_url` at). Note `get_agent_version()` reads
+   **`pyproject.toml` on disk first** (a source upgrade rewrites it) — installed package metadata can lag
+   `uv sync`; the reported `commit` only changes for a git-checkout run, not a source tarball (no `.git`).
 5. **Config edit** — Toil pushes `SET_CONFIG` (operator "Edit" in the machines panel); the agent merges
    the non-`[toil]` keys into `config.ini` via `app/config/writer.py`, acks
    `CONFIG_UPDATED`/`CONFIG_REJECTED`, then drains and exits **75** to re-REGISTER with the new values.

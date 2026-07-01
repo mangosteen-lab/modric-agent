@@ -7,7 +7,12 @@ import pytest
 
 from app.config.loader import load_config
 from app.config.writer import ConfigUpdateError, write_config
-from app.core.updater import _apply_source_archive, _install_artifact, _is_source_archive
+from app.core.updater import (
+    _apply_source_archive,
+    _install_artifact,
+    _is_source_archive,
+    is_source_artifact_url,
+)
 
 # --- source-tarball upgrade -----------------------------------------------
 
@@ -29,6 +34,22 @@ def test_is_source_archive():
     assert _is_source_archive(Path("x.tgz"))
     assert _is_source_archive(Path("x.zip"))
     assert not _is_source_archive(Path("x.whl"))
+
+
+def test_is_source_artifact_url():
+    assert is_source_artifact_url("https://h/releases/download/v1/modric-agent-1.tar.gz")
+    assert is_source_artifact_url("https://h/x.zip?token=abc")
+    assert not is_source_artifact_url("https://h/modric_agent-1-py3-none-any.whl")
+    assert not is_source_artifact_url("")
+
+
+def test_get_agent_version_prefers_pyproject(monkeypatch):
+    # The reported version must follow pyproject.toml on disk (rewritten by a source
+    # upgrade), not stale installed package metadata.
+    import app.core.version as v
+    monkeypatch.setattr(v, "_version_from_pyproject", lambda: "2026.7.1")
+    monkeypatch.setattr(v.metadata, "version", lambda _name: "1.0.0")
+    assert v.get_agent_version() == "2026.7.1"
 
 
 def test_apply_source_archive_updates_code_preserves_config(tmp_path):

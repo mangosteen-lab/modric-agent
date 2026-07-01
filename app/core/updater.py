@@ -62,13 +62,15 @@ class CUpgradeManager:
         self.enabled = enabled
         self.artifact_dir = Path(artifact_dir) if artifact_dir else None
 
-    def stage_and_launch(self, request: CUpgradeRequest) -> Path:
+    def _check_ready(self, request: CUpgradeRequest) -> None:
         # A manual "Upgrade agent" (request.force) overrides the auto_upgrade gate.
         if not self.enabled and not request.force:
             raise UpgradeError("auto upgrade is disabled")
         if not request.version:
             raise UpgradeError("upgrade version is missing")
 
+    def stage_and_launch(self, request: CUpgradeRequest) -> Path:
+        self._check_ready(request)
         artifact_path = self._download(request.url)
         if request.sha256:
             self._verify_sha256(artifact_path, request.sha256)
@@ -76,6 +78,19 @@ class CUpgradeManager:
             self._launch_installer(artifact_path, request.version)
         except Exception as exc:
             raise UpgradeError(f"failed to launch upgrade installer: {exc}") from exc
+        return artifact_path
+
+    def stage_and_apply_source(self, request: CUpgradeRequest) -> Path:
+        """Download a source archive and apply it **in-process**, so the new files are
+        on disk before the agent exits to be relaunched. Unlike the wheel path (which
+        must pip-install after the old process dies, via a detached installer), this
+        avoids the race where a supervisor restarts the agent — on old files — before a
+        detached installer finishes extracting + `uv sync`."""
+        self._check_ready(request)
+        artifact_path = self._download(request.url)
+        if request.sha256:
+            self._verify_sha256(artifact_path, request.sha256)
+        _apply_source_archive(artifact_path, _AGENT_ROOT)
         return artifact_path
 
     def _download(self, url: str) -> Path:
@@ -123,13 +138,33 @@ class CUpgradeManager:
             "--target-version",
             target_version,
         ]
-        subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=os.name != "nt",
-        )
+        # The installer is detached and outlives us, so its output can't go to the
+        # agent's own stdout. Send it to logs/upgrade.log (not /dev/null) so a failed
+        # pip install / uv sync is diagnosable instead of silently swallowed.
+        log_path = _AGENT_ROOT / "logs" / "upgrade.log"
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            out = open(log_path, "a", encoding="utf-8")
+        except Exception:
+            out = subprocess.DEVNULL
+        try:
+            subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=out,
+                close_fds=os.name != "nt",
+            )
+        finally:
+            if out is not subprocess.DEVNULL:
+                out.close()
+
+
+def is_source_artifact_url(url: str) -> bool:
+    """True if the upgrade URL points at a source archive (applied in-process) rather
+    than a wheel (installed via the detached installer)."""
+    path = urllib.parse.urlparse(url or "").path.lower()
+    return any(path.endswith(suffix) for suffix in _SOURCE_SUFFIXES)
 
 
 def _wait_for_process_exit(pid: int, timeout: float = 120.0):

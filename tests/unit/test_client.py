@@ -203,20 +203,92 @@ async def test_set_config_rejects_locked_section(tmp_path):
 
 @pytest.mark.asyncio
 async def test_forced_upgrade_bypasses_auto_upgrade_off():
-    client = _make_client(auto_upgrade=False)
-    ws = AsyncMock()
+    upgrade_mgr = MagicMock()
+    cmd_mgr = MagicMock(spec=CCommandMgr)
+    cmd_mgr.active_count.return_value = 0
+    exits = []
+    # auto_upgrade is OFF, but a forced (manual) upgrade must still proceed.
+    client = _make_client(command_mgr=cmd_mgr, auto_upgrade=False, upgrade_mgr=upgrade_mgr,
+                          exit_func=lambda c: exits.append(c))
+
     sent = []
+    ws = AsyncMock()
     async def capture(msg): sent.append(json.loads(msg))
     ws.send = capture
+    ws.__aiter__ = MagicMock(return_value=async_iter([
+        json.dumps({"type": "REGISTERED", "machine_id": "m-1"}),
+        json.dumps({"type": "UPGRADE_AVAILABLE", "force": True, "version": "1.0.1",
+                    "url": "https://x/modric-agent-1.0.1.tar.gz"}),
+    ]))
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+        for _ in range(30):
+            if exits:
+                break
+            await asyncio.sleep(0.01)
 
-    with patch.object(client._cmd_mgr, "begin_drain") as drain:
-        await client._schedule_upgrade(ws, {
-            "type": "UPGRADE_AVAILABLE", "force": True,
-            "version": "1.0.1", "url": "https://x/modric-agent-1.0.1.tar.gz",
-        })
-    # force => did not skip; started the drain/upgrade path
-    drain.assert_called_once()
     assert not any(m["type"] == "UPGRADE_SKIPPED" for m in sent)
+    upgrade_mgr.stage_and_apply_source.assert_called_once()
+    assert exits == [75]
+
+
+@pytest.mark.asyncio
+async def test_source_upgrade_applies_in_process_then_exits():
+    upgrade_mgr = MagicMock()
+    cmd_mgr = MagicMock(spec=CCommandMgr)
+    cmd_mgr.active_count.return_value = 0
+    exits = []
+    client = _make_client(command_mgr=cmd_mgr, auto_upgrade=True, upgrade_mgr=upgrade_mgr,
+                          exit_func=lambda c: exits.append(c))
+
+    sent = []
+    ws = AsyncMock()
+    async def capture(msg): sent.append(json.loads(msg))
+    ws.send = capture
+    ws.__aiter__ = MagicMock(return_value=async_iter([
+        json.dumps({"type": "REGISTERED", "machine_id": "m-1"}),
+        json.dumps({"type": "UPGRADE_AVAILABLE", "version": "1.0.1",
+                    "url": "https://x/modric-agent-1.0.1.tar.gz"}),
+    ]))
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+        for _ in range(30):
+            if exits:
+                break
+            await asyncio.sleep(0.01)
+
+    # Source URL => applied in-process, not handed to the detached wheel installer.
+    upgrade_mgr.stage_and_apply_source.assert_called_once()
+    upgrade_mgr.stage_and_launch.assert_not_called()
+    assert exits == [75]
+
+
+@pytest.mark.asyncio
+async def test_wheel_upgrade_uses_detached_installer():
+    upgrade_mgr = MagicMock()
+    cmd_mgr = MagicMock(spec=CCommandMgr)
+    cmd_mgr.active_count.return_value = 0
+    exits = []
+    client = _make_client(command_mgr=cmd_mgr, auto_upgrade=True, upgrade_mgr=upgrade_mgr,
+                          exit_func=lambda c: exits.append(c))
+
+    ws = AsyncMock()
+    ws.send = AsyncMock()
+    ws.__aiter__ = MagicMock(return_value=async_iter([
+        json.dumps({"type": "REGISTERED", "machine_id": "m-1"}),
+        json.dumps({"type": "UPGRADE_AVAILABLE", "version": "1.0.1",
+                    "url": "https://x/modric_agent-1.0.1-py3-none-any.whl"}),
+    ]))
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+        for _ in range(30):
+            if exits:
+                break
+            await asyncio.sleep(0.01)
+
+    upgrade_mgr.stage_and_launch.assert_called_once()
+    upgrade_mgr.stage_and_apply_source.assert_not_called()
+    assert exits == [75]
 
 
 @pytest.mark.asyncio

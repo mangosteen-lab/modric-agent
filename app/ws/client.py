@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import platform
 import socket
 import time
@@ -15,7 +16,12 @@ from app.core.machine_version import (
     InvalidMachineVersionError,
     MachineVersionStore,
 )
-from app.core.updater import RESTART_EXIT_CODE, CUpgradeManager, CUpgradeRequest
+from app.core.updater import (
+    RESTART_EXIT_CODE,
+    CUpgradeManager,
+    CUpgradeRequest,
+    is_source_artifact_url,
+)
 from app.core.version import get_agent_commit, get_agent_version, version_to_code
 
 logger = logging.getLogger("modric_agent.ws")
@@ -24,8 +30,12 @@ RECONNECT_BASE = 1.0
 RECONNECT_MAX  = 60.0
 
 
-def _raise_system_exit(code: int):
-    raise SystemExit(code)
+def _default_exit(code: int):
+    # Called from the upgrade/restart task (off the main coroutine). os._exit avoids
+    # asyncio's "Task exception was never retrieved" traceback that a raised SystemExit
+    # produces there, and skips teardown we don't need — the supervisor relaunches us.
+    logging.shutdown()
+    os._exit(code)
 
 
 def _get_ip() -> str:
@@ -87,7 +97,7 @@ class SoilWSClient:
         self.session_token: str | None = None
         self._cmd_mgr = command_mgr or CCommandMgr(capacity=capacity)
         self._upgrade_mgr = upgrade_mgr or CUpgradeManager(enabled=auto_upgrade)
-        self._exit_func = exit_func or _raise_system_exit
+        self._exit_func = exit_func or _default_exit
         self._upgrade_task: asyncio.Task | None = None
         # COMMAND_DONE results that couldn't be sent because the socket dropped;
         # re-delivered after the next successful REGISTER.
@@ -411,7 +421,13 @@ class SoilWSClient:
                 "machine_id":     self.machine_id,
                 "target_version": request.version,
             }))
-            await loop.run_in_executor(None, self._upgrade_mgr.stage_and_launch, request)
+            # Source tarball: apply in-process (files on disk before we exit, so the
+            # supervisor relaunches into the new code). Wheel: hand off to the detached
+            # installer, which pip-installs after we exit.
+            if is_source_artifact_url(request.url):
+                await loop.run_in_executor(None, self._upgrade_mgr.stage_and_apply_source, request)
+            else:
+                await loop.run_in_executor(None, self._upgrade_mgr.stage_and_launch, request)
             await ws.send(json.dumps({
                 "type":           "UPGRADE_RESTARTING",
                 "machine_id":     self.machine_id,

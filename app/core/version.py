@@ -31,11 +31,18 @@ def get_agent_commit() -> str:
 
 
 def get_agent_version() -> str:
+    # Prefer pyproject.toml on disk: it's the source of truth for a source checkout and
+    # is rewritten by a source-tarball upgrade, so the reported version reflects the
+    # running code immediately. Installed package metadata can lag until `uv sync`
+    # reinstalls the package (which may race a restart or be skipped), so it's only a
+    # fallback for a pip-installed wheel with no pyproject.toml on disk.
+    from_pyproject = _version_from_pyproject()
+    if from_pyproject:
+        return from_pyproject
     try:
         return metadata.version(PACKAGE_NAME)
     except metadata.PackageNotFoundError:
-        # Running from source (not pip-installed) — read version from pyproject.toml
-        return _version_from_pyproject() or DEFAULT_VERSION
+        return DEFAULT_VERSION
 
 
 def _version_from_pyproject() -> str | None:
