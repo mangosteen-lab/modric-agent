@@ -10,6 +10,8 @@ Pass configuration via env (12-factor style):
     MODRIC_AGENT_AUTO_UPGRADE  true/false          (default: false in containers)
     MODRIC_AGENT_UPGRADE_CHANNEL                              (default: stable)
     MODRIC_AGENT_LABELS        "key=value, key2=value2"      (default: empty)
+    MODRIC_AGENT_REST_HOST     machine_version REST bind host (default: 127.0.0.1)
+    MODRIC_AGENT_REST_PORT     machine_version REST bind port (default: 8765)
     MODRIC_AGENT_CONFIG        where to write/read the ini   (default: conf/config.ini)
 
 If MODRIC_TOIL_WSS_URL / MODRIC_TOIL_API_KEY are not set, nothing is rendered and
@@ -39,6 +41,10 @@ def render_config() -> bool:
         "auto_upgrade": os.getenv("MODRIC_AGENT_AUTO_UPGRADE", "false"),
         "upgrade_channel": os.getenv("MODRIC_AGENT_UPGRADE_CHANNEL", "stable"),
         "labels": os.getenv("MODRIC_AGENT_LABELS", ""),
+    }
+    cfg["rest"] = {
+        "host": os.getenv("MODRIC_AGENT_REST_HOST", "127.0.0.1"),
+        "port": os.getenv("MODRIC_AGENT_REST_PORT", "8765"),
     }
     cfg["toil"] = {"wss_url": wss_url, "api_key": api_key}
     cfg["logging"] = {

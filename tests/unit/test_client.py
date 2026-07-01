@@ -76,6 +76,52 @@ async def test_register_sends_api_key_on_first_connect():
 
 
 @pytest.mark.asyncio
+async def test_register_and_pong_include_machine_version():
+    from app.core.machine_version import MachineVersionStore
+
+    store = MachineVersionStore(None)   # in-memory, defaults to 0
+    store.set(2026070101)
+    client = _make_client(machine_version_store=store)
+
+    messages_sent = []
+    ws = AsyncMock()
+    async def capture(msg): messages_sent.append(json.loads(msg))
+    ws.send = capture
+
+    registered_msg = json.dumps({"type": "REGISTERED", "machine_id": "m-uuid-1"})
+    ping_msg = json.dumps({"type": "PING"})
+    ws.__aiter__ = MagicMock(return_value=async_iter([registered_msg, ping_msg]))
+
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+
+    reg = messages_sent[0]
+    assert reg["type"] == "REGISTER"
+    assert reg["machine_version"] == 2026070101
+
+    pong = next(m for m in messages_sent if m["type"] == "PONG")
+    assert pong["machine_version"] == 2026070101
+
+
+@pytest.mark.asyncio
+async def test_register_machine_version_defaults_to_zero_without_store():
+    client = _make_client()   # no machine_version_store
+
+    messages_sent = []
+    ws = AsyncMock()
+    async def capture(msg): messages_sent.append(json.loads(msg))
+    ws.send = capture
+
+    ws.__aiter__ = MagicMock(return_value=async_iter([
+        json.dumps({"type": "REGISTERED", "machine_id": "m-uuid-1"}),
+    ]))
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+
+    assert messages_sent[0]["machine_version"] == 0
+
+
+@pytest.mark.asyncio
 async def test_register_uses_session_token_on_reconnect():
     client = _make_client()
     client.session_token = "existing-session-tok"

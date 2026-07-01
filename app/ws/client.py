@@ -10,6 +10,7 @@ import psutil
 import websockets
 
 from app.core.command_mgr import CCommandMgr, CommandRejectedError
+from app.core.machine_version import UNSET_MACHINE_VERSION, MachineVersionStore
 from app.core.updater import RESTART_EXIT_CODE, CUpgradeManager, CUpgradeRequest
 from app.core.version import get_agent_commit, get_agent_version, version_to_code
 
@@ -59,12 +60,16 @@ class SoilWSClient:
                  labels: dict[str, str] | None = None,
                  command_mgr: CCommandMgr | None = None,
                  upgrade_mgr: CUpgradeManager | None = None,
+                 machine_version_store: MachineVersionStore | None = None,
                  exit_func: Callable[[int], None] | None = None):
         self.wss_url  = wss_url
         self.api_key  = api_key
         self.name     = name
         self.capacity = capacity
         self.labels   = labels or {}
+        # Holds the user-defined machine_version (distinct from the agent version);
+        # read on every heartbeat so a runtime update is reported to Toil promptly.
+        self._machine_version_store = machine_version_store
         raw_version = version if version is not None else get_agent_version()
         self.version  = str(raw_version)
         self.version_code = version_to_code(raw_version)
@@ -80,6 +85,10 @@ class SoilWSClient:
         # COMMAND_DONE results that couldn't be sent because the socket dropped;
         # re-delivered after the next successful REGISTER.
         self._pending_results: dict[str, dict] = {}
+
+    def _machine_version(self) -> int:
+        return self._machine_version_store.get() if self._machine_version_store \
+            else UNSET_MACHINE_VERSION
 
     async def run(self):
         """Outer reconnect loop. Never returns."""
@@ -108,6 +117,7 @@ class SoilWSClient:
             "type":            "REGISTER",
             "version":         self.version,
             "version_code":    self.version_code,
+            "machine_version": self._machine_version(),
             "commit":          self.commit,
             "auto_upgrade":    self.auto_upgrade,
             "upgrade_channel": self.upgrade_channel,
@@ -137,9 +147,10 @@ class SoilWSClient:
             elif msg_type == "PING":
                 sysinfo = _collect_sysinfo()
                 await ws.send(json.dumps({
-                    "type":       "PONG",
-                    "ts":         time.time(),
-                    "machine_id": self.machine_id,
+                    "type":            "PONG",
+                    "ts":              time.time(),
+                    "machine_id":      self.machine_id,
+                    "machine_version": self._machine_version(),
                     **sysinfo,
                 }))
 

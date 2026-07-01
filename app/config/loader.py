@@ -22,6 +22,20 @@ def load_config(path: str | None = None) -> dict:
     log_file = os.getenv("MODRIC_AGENT_LOG_FILE", log_file)
     log_level = os.getenv("MODRIC_AGENT_LOG_LEVEL", log_level)
 
+    # Local REST API (machine_version management) — loopback by default since it is
+    # meant for callers running on the machine itself.
+    rest_host = "127.0.0.1"
+    rest_port = 8765
+    if cfg.has_section("rest"):
+        rest_host = cfg["rest"].get("host", rest_host)
+        rest_port = cfg["rest"].getint("port", rest_port)
+    rest_host = os.getenv("MODRIC_AGENT_REST_HOST", rest_host)
+    rest_port = int(os.getenv("MODRIC_AGENT_REST_PORT", rest_port))
+
+    # Where the machine_version is persisted (absent => first start reads 0).
+    machine_version_file = agent_section.get("machine_version_file", "state/machine_version.json")
+    machine_version_file = os.getenv("MODRIC_AGENT_MACHINE_VERSION_FILE", machine_version_file)
+
     return {
         "wss_url": cfg["toil"]["wss_url"],
         "api_key": cfg["toil"]["api_key"],
@@ -32,6 +46,9 @@ def load_config(path: str | None = None) -> dict:
         "labels": parse_labels(agent_section.get("labels", "")),
         "log_file": log_file,
         "log_level": log_level,
+        "rest_host": rest_host,
+        "rest_port": rest_port,
+        "machine_version_file": machine_version_file,
     }
 
 

@@ -41,9 +41,19 @@ The message types and field names (`REGISTER`, `EXECUTE`, `CHUNK`, `COMMAND_DONE
 ids, script types) are a contract with `modric/Toil/app/ws/soil_ws.py` and
 `modric/Toil/app/core/remote_execute.py`. Change both sides together.
 
+## machine_version
+
+`app/core/machine_version.py` holds the **machine_version**: a user-defined `YYYYMMDDXX` integer
+(e.g. `2026070101`, `0` = unset) for *the machine*, distinct from the agent software version
+(`app/core/version.py`). It is persisted to `[agent] machine_version_file` (absent on a fresh machine
+⇒ first start reads `0`), reported to Toil in every REGISTER/PONG heartbeat, and exposed to job steps
+as Toil's `MACHINE_<idx>_VERSION` built-in. A deploy/upgrade step running on the machine updates it
+through the agent's **local REST API** (`app/rest/server.py`, stdlib `http.server` on a daemon thread,
+loopback `[rest] host:port`, default `127.0.0.1:8765`): `GET/PUT /machine-version`.
+
 ## Notes
 
-- The agent connects outbound only — no inbound ports. Use a Toil URL reachable from the machine
-  (not `localhost` inside a container).
+- The agent connects outbound only, apart from the loopback machine_version REST API above. Use a Toil
+  URL reachable from the machine (not `localhost` inside a container).
 - The Linux container image ships `bash`, `curl`, `git`, `jq`; `.bat` steps require a Windows host.
 - End commit messages with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
