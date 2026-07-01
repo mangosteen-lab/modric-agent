@@ -104,6 +104,53 @@ async def test_register_and_pong_include_machine_version():
 
 
 @pytest.mark.asyncio
+async def test_set_machine_version_updates_store_and_acks():
+    from app.core.machine_version import MachineVersionStore
+
+    store = MachineVersionStore(None)
+    client = _make_client(machine_version_store=store)
+
+    messages_sent = []
+    ws = AsyncMock()
+    async def capture(msg): messages_sent.append(json.loads(msg))
+    ws.send = capture
+
+    ws.__aiter__ = MagicMock(return_value=async_iter([
+        json.dumps({"type": "REGISTERED", "machine_id": "m-uuid-1"}),
+        json.dumps({"type": "SET_MACHINE_VERSION", "machine_version": 2026070101}),
+    ]))
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+
+    assert store.get() == 2026070101
+    ack = next(m for m in messages_sent if m["type"] == "MACHINE_VERSION_UPDATED")
+    assert ack["machine_version"] == 2026070101
+
+
+@pytest.mark.asyncio
+async def test_set_machine_version_rejects_invalid():
+    from app.core.machine_version import MachineVersionStore
+
+    store = MachineVersionStore(None)
+    client = _make_client(machine_version_store=store)
+
+    messages_sent = []
+    ws = AsyncMock()
+    async def capture(msg): messages_sent.append(json.loads(msg))
+    ws.send = capture
+
+    ws.__aiter__ = MagicMock(return_value=async_iter([
+        json.dumps({"type": "REGISTERED", "machine_id": "m-uuid-1"}),
+        json.dumps({"type": "SET_MACHINE_VERSION", "machine_version": 42}),
+    ]))
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+
+    assert store.get() == 0
+    assert any(m["type"] == "MACHINE_VERSION_REJECTED" for m in messages_sent)
+
+
+@pytest.mark.asyncio
 async def test_register_machine_version_defaults_to_zero_without_store():
     client = _make_client()   # no machine_version_store
 

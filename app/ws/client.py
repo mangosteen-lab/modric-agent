@@ -10,7 +10,11 @@ import psutil
 import websockets
 
 from app.core.command_mgr import CCommandMgr, CommandRejectedError
-from app.core.machine_version import UNSET_MACHINE_VERSION, MachineVersionStore
+from app.core.machine_version import (
+    UNSET_MACHINE_VERSION,
+    InvalidMachineVersionError,
+    MachineVersionStore,
+)
 from app.core.updater import RESTART_EXIT_CODE, CUpgradeManager, CUpgradeRequest
 from app.core.version import get_agent_commit, get_agent_version, version_to_code
 
@@ -90,6 +94,35 @@ class SoilWSClient:
         return self._machine_version_store.get() if self._machine_version_store \
             else UNSET_MACHINE_VERSION
 
+    async def _handle_set_machine_version(self, ws, msg: dict):
+        """Toil-pushed machine_version update (operator edit in the machines panel).
+        Persist it via the same store as the REST API and ack; the new value then
+        flows back to Toil in subsequent heartbeats."""
+        requested = msg.get("machine_version")
+        if not self._machine_version_store:
+            await ws.send(json.dumps({
+                "type":       "MACHINE_VERSION_REJECTED",
+                "machine_id": self.machine_id,
+                "machine_version": requested,
+                "reason":     "machine_version store is not configured",
+            }))
+            return
+        try:
+            value = self._machine_version_store.set(requested)
+        except InvalidMachineVersionError as exc:
+            await ws.send(json.dumps({
+                "type":       "MACHINE_VERSION_REJECTED",
+                "machine_id": self.machine_id,
+                "machine_version": requested,
+                "reason":     str(exc),
+            }))
+            return
+        await ws.send(json.dumps({
+            "type":            "MACHINE_VERSION_UPDATED",
+            "machine_id":      self.machine_id,
+            "machine_version": value,
+        }))
+
     async def run(self):
         """Outer reconnect loop. Never returns."""
         delay = RECONNECT_BASE
@@ -164,6 +197,9 @@ class SoilWSClient:
                 command_id = msg.get("command_id")
                 if command_id:
                     self._cmd_mgr.kill(command_id)
+
+            elif msg_type == "SET_MACHINE_VERSION":
+                await self._handle_set_machine_version(ws, msg)
 
             elif msg_type == "UPGRADE_REQUIRED":
                 if msg.get("url") or msg.get("artifact_url"):

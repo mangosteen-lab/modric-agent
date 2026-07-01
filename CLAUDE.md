@@ -47,9 +47,12 @@ ids, script types) are a contract with `modric/Toil/app/ws/soil_ws.py` and
 (e.g. `2026070101`, `0` = unset) for *the machine*, distinct from the agent software version
 (`app/core/version.py`). It is persisted to `[agent] machine_version_file` (absent on a fresh machine
 ⇒ first start reads `0`), reported to Toil in every REGISTER/PONG heartbeat, and exposed to job steps
-as Toil's `MACHINE_<idx>_VERSION` built-in. A deploy/upgrade step running on the machine updates it
-through the agent's **local REST API** (`app/rest/server.py`, stdlib `http.server` on a daemon thread,
-loopback `[rest] host:port`, default `127.0.0.1:8765`): `GET/PUT /machine-version`.
+as Toil's `MACHINE_<idx>_VERSION` built-in. Two update paths, both landing in the same
+`MachineVersionStore`: (1) a deploy/upgrade step running on the machine calls the agent's **local REST
+API** (`app/rest/server.py`, stdlib `http.server` on a daemon thread, loopback `[rest] host:port`,
+default `127.0.0.1:8765`): `GET/PUT /machine-version`; (2) an operator edits it in Toil's machines
+panel, which pushes a `SET_MACHINE_VERSION` message over the WebSocket — the agent persists it and
+replies `MACHINE_VERSION_UPDATED`/`MACHINE_VERSION_REJECTED` (`app/ws/client.py`).
 
 ## Notes
 
