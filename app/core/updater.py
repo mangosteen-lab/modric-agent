@@ -2,12 +2,15 @@ import argparse
 import hashlib
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import urllib.parse
 import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,6 +19,18 @@ import psutil
 logger = logging.getLogger("modric_agent.updater")
 
 RESTART_EXIT_CODE = 75
+
+# Agent repo root: app/core/updater.py -> repo root.
+_AGENT_ROOT = Path(__file__).resolve().parents[2]
+
+# Suffixes we treat as a source archive (extract in place) rather than a wheel.
+_SOURCE_SUFFIXES = (".tar.gz", ".tgz", ".zip")
+
+# Code paths copied out of a source archive into the agent root. Everything else in
+# the agent dir — conf/config.ini, .venv/, logs/, state/ — is left untouched so a
+# source upgrade never disturbs local config or the venv.
+_SOURCE_PAYLOAD = ("app", "pyproject.toml", "uv.lock", "StartModricAgent.bat",
+                   "conf/config.example.ini")
 
 
 class UpgradeError(RuntimeError):
@@ -48,7 +63,8 @@ class CUpgradeManager:
         self.artifact_dir = Path(artifact_dir) if artifact_dir else None
 
     def stage_and_launch(self, request: CUpgradeRequest) -> Path:
-        if not self.enabled:
+        # A manual "Upgrade agent" (request.force) overrides the auto_upgrade gate.
+        if not self.enabled and not request.force:
             raise UpgradeError("auto upgrade is disabled")
         if not request.version:
             raise UpgradeError("upgrade version is missing")
@@ -131,12 +147,76 @@ def _wait_for_process_exit(pid: int, timeout: float = 120.0):
         raise UpgradeError(f"agent process {pid} did not exit within {timeout:.0f}s")
 
 
-def _install_artifact(artifact_path: Path):
+def _is_source_archive(artifact_path: Path) -> bool:
+    name = artifact_path.name.lower()
+    return any(name.endswith(suffix) for suffix in _SOURCE_SUFFIXES)
+
+
+def _install_artifact(artifact_path: Path, agent_root: Path | None = None):
     if not artifact_path.exists():
         raise UpgradeError(f"upgrade artifact not found: {artifact_path}")
 
+    if _is_source_archive(artifact_path):
+        _apply_source_archive(artifact_path, agent_root or _AGENT_ROOT)
+        return
+
     cmd = [sys.executable, "-m", "pip", "install", "--upgrade", str(artifact_path)]
     subprocess.check_call(cmd)
+
+
+def _extract_archive(artifact_path: Path, dest: Path) -> None:
+    name = artifact_path.name.lower()
+    if name.endswith(".zip"):
+        with zipfile.ZipFile(artifact_path) as zf:
+            zf.extractall(dest)
+    else:
+        with tarfile.open(artifact_path) as tf:
+            tf.extractall(dest, filter="data")
+
+
+def _archive_source_root(extract_dir: Path) -> Path:
+    """The directory holding the code inside an extracted archive. GitHub archives
+    nest everything under a single top-level dir (e.g. modric-agent-<ref>/); a flat
+    archive extracts the payload directly. Detect by looking for the `app` package."""
+    if (extract_dir / "app").is_dir():
+        return extract_dir
+    children = [c for c in extract_dir.iterdir() if c.is_dir()]
+    if len(children) == 1 and (children[0] / "app").is_dir():
+        return children[0]
+    for child in children:
+        if (child / "app").is_dir():
+            return child
+    raise UpgradeError("source archive does not contain an 'app' package")
+
+
+def _apply_source_archive(artifact_path: Path, agent_root: Path) -> None:
+    """Extract a source tarball/zip and copy the code payload over the agent root,
+    preserving local state (conf/config.ini, .venv, logs, state). Then `uv sync` so
+    the venv matches the new pyproject before the supervisor relaunches the agent."""
+    with tempfile.TemporaryDirectory(prefix="modric-agent-src-") as tmp:
+        extract_dir = Path(tmp)
+        _extract_archive(artifact_path, extract_dir)
+        src_root = _archive_source_root(extract_dir)
+
+        for rel in _SOURCE_PAYLOAD:
+            src = src_root / rel
+            if not src.exists():
+                continue  # optional payload item absent in this archive
+            dst = agent_root / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                shutil.rmtree(dst, ignore_errors=True)
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+
+    logger.info("Applied source upgrade into %s", agent_root)
+    try:
+        subprocess.check_call(["uv", "sync"], cwd=str(agent_root))
+    except Exception as exc:
+        # A failed sync isn't fatal here — StartModricAgent.bat runs `uv run` which
+        # re-syncs on launch. Log and continue to the restart.
+        logger.warning("uv sync after source upgrade failed (will retry on launch): %s", exc)
 
 
 def main(argv: list[str] | None = None) -> int:

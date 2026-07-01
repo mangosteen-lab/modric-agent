@@ -65,6 +65,7 @@ class SoilWSClient:
                  command_mgr: CCommandMgr | None = None,
                  upgrade_mgr: CUpgradeManager | None = None,
                  machine_version_store: MachineVersionStore | None = None,
+                 config_path: str | None = None,
                  exit_func: Callable[[int], None] | None = None):
         self.wss_url  = wss_url
         self.api_key  = api_key
@@ -74,6 +75,8 @@ class SoilWSClient:
         # Holds the user-defined machine_version (distinct from the agent version);
         # read on every heartbeat so a runtime update is reported to Toil promptly.
         self._machine_version_store = machine_version_store
+        # config.ini path, so an operator "Edit config" (SET_CONFIG) can rewrite it.
+        self._config_path = config_path
         raw_version = version if version is not None else get_agent_version()
         self.version  = str(raw_version)
         self.version_code = version_to_code(raw_version)
@@ -122,6 +125,54 @@ class SoilWSClient:
             "machine_id":      self.machine_id,
             "machine_version": value,
         }))
+
+    async def _handle_set_config(self, ws, msg: dict):
+        """Operator config edit from Toil's machines panel. Merge the provided
+        non-[toil] keys into config.ini, ack, then drain and exit 75 so the agent
+        restarts and re-REGISTERs with the new name/labels/capacity."""
+        from app.config.writer import ConfigUpdateError, write_config
+
+        if not self._config_path:
+            await ws.send(json.dumps({
+                "type":       "CONFIG_REJECTED",
+                "machine_id": self.machine_id,
+                "reason":     "config path is not known to the agent",
+            }))
+            return
+        try:
+            applied = write_config(self._config_path, msg.get("config") or {})
+        except ConfigUpdateError as exc:
+            await ws.send(json.dumps({
+                "type":       "CONFIG_REJECTED",
+                "machine_id": self.machine_id,
+                "reason":     str(exc),
+            }))
+            return
+
+        await ws.send(json.dumps({
+            "type":       "CONFIG_UPDATED",
+            "machine_id": self.machine_id,
+            "applied":    applied,
+        }))
+        # Restart so the new config takes effect (name/labels/capacity are only sent
+        # at REGISTER). Guard against overlapping with an in-flight upgrade/restart.
+        if self._upgrade_task and not self._upgrade_task.done():
+            return
+        self._cmd_mgr.begin_drain()
+        self._upgrade_task = asyncio.create_task(
+            self._restart_when_idle(ws, "config updated"))
+
+    async def _restart_when_idle(self, ws, reason: str):
+        """Drain in-flight commands, then exit 75 so the supervisor relaunches the
+        agent with fresh code/config."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._cmd_mgr.wait_until_idle)
+        await ws.send(json.dumps({
+            "type":       "AGENT_RESTARTING",
+            "machine_id": self.machine_id,
+            "reason":     reason,
+        }))
+        self._exit_func(RESTART_EXIT_CODE)
 
     async def run(self):
         """Outer reconnect loop. Never returns."""
@@ -200,6 +251,9 @@ class SoilWSClient:
 
             elif msg_type == "SET_MACHINE_VERSION":
                 await self._handle_set_machine_version(ws, msg)
+
+            elif msg_type == "SET_CONFIG":
+                await self._handle_set_config(ws, msg)
 
             elif msg_type == "UPGRADE_REQUIRED":
                 if msg.get("url") or msg.get("artifact_url"):
@@ -317,7 +371,9 @@ class SoilWSClient:
         }))
 
     async def _schedule_upgrade(self, ws, msg: dict):
-        if not self.auto_upgrade:
+        # A manual "Upgrade agent" (force) overrides the auto_upgrade-off gate; the
+        # periodic auto-upgrade still respects it.
+        if not self.auto_upgrade and not msg.get("force"):
             await ws.send(json.dumps({
                 "type":       "UPGRADE_SKIPPED",
                 "machine_id": self.machine_id,

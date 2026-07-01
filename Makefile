@@ -1,4 +1,4 @@
-.PHONY: help sync run test lint lint-fix install install-interactive uninstall status docker-build docker-run docker-run-env docker-logs docker-stop
+.PHONY: help sync run test lint lint-fix install install-interactive uninstall status release-tarball docker-build docker-run docker-run-env docker-logs docker-stop
 
 # Container image / name (override: make docker-build IMAGE=foo:1.2.3)
 IMAGE ?= modric-agent:latest
@@ -22,6 +22,7 @@ help:
 	@echo "  uninstall      Remove the agent OS service"
 	@echo "  status         Show the agent OS service status"
 	@echo "  build          Build a release wheel + print its sha256 (for self-upgrade)"
+	@echo "  release-tarball  Build a source .tar.gz + print its sha256 (for git-style hot upgrade)"
 	@echo "  docker-build   Build the container image ($(IMAGE))"
 	@echo "  docker-run     Run the agent in a container (mounts $(CONFIG))"
 	@echo "  docker-run-env Run the agent, configured from MODRIC_* env vars"
@@ -69,6 +70,20 @@ build:
 		echo "  $$f"; \
 		echo "  sha256 = $$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$$f")"; \
 	done
+
+# Build a source tarball for the "Upgrade agent" button: the agent downloads this,
+# extracts the code over its dir (preserving conf/config.ini + .venv), `uv sync`s and
+# restarts. Uses `git archive` (tracked files only, nested under a top-level dir like
+# GitHub's source archives). Host the .tar.gz and set Toil [soil]
+# upgrade_artifact_url/upgrade_artifact_sha256 to it. Bump pyproject.toml version first.
+release-tarball:
+	rm -rf dist && mkdir -p dist
+	$(eval VERSION := $(shell python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"))
+	git archive --format=tar.gz --prefix=modric-agent-$(VERSION)/ -o dist/modric-agent-$(VERSION).tar.gz HEAD
+	@echo "Built source tarball (host at an HTTPS URL, then set Toil [soil] latest_version/url/sha256):"
+	@f=dist/modric-agent-$(VERSION).tar.gz; \
+		echo "  $$f"; \
+		echo "  sha256 = $$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$$f")"
 
 docker-build:
 	docker build -f Dockerfile-py --build-arg MODRIC_AGENT_COMMIT=$(COMMIT) -t $(IMAGE) .

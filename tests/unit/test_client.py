@@ -1,3 +1,4 @@
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -148,6 +149,74 @@ async def test_set_machine_version_rejects_invalid():
 
     assert store.get() == 0
     assert any(m["type"] == "MACHINE_VERSION_REJECTED" for m in messages_sent)
+
+
+@pytest.mark.asyncio
+async def test_set_config_writes_ini_and_restarts(tmp_path):
+    ini = tmp_path / "config.ini"
+    ini.write_text("[agent]\nname = OLD\ncapacity = 4\n[toil]\nwss_url = w\napi_key = k\n")
+    exits = []
+    client = _make_client(config_path=str(ini), exit_func=lambda code: exits.append(code))
+
+    messages_sent = []
+    ws = AsyncMock()
+    async def capture(msg): messages_sent.append(json.loads(msg))
+    ws.send = capture
+    ws.__aiter__ = MagicMock(return_value=async_iter([
+        json.dumps({"type": "REGISTERED", "machine_id": "m-uuid-1"}),
+        json.dumps({"type": "SET_CONFIG",
+                    "config": {"agent": {"name": "NEW", "labels": "template=LINUX_ABA"}}}),
+    ]))
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+        # let the drain-then-restart task run
+        for _ in range(20):
+            if exits:
+                break
+            await asyncio.sleep(0.01)
+
+    assert "name = NEW" in ini.read_text()
+    assert any(m["type"] == "CONFIG_UPDATED" for m in messages_sent)
+    assert exits == [75]   # RESTART_EXIT_CODE
+
+
+@pytest.mark.asyncio
+async def test_set_config_rejects_locked_section(tmp_path):
+    ini = tmp_path / "config.ini"
+    ini.write_text("[toil]\nwss_url = w\napi_key = k\n")
+    client = _make_client(config_path=str(ini))
+
+    messages_sent = []
+    ws = AsyncMock()
+    async def capture(msg): messages_sent.append(json.loads(msg))
+    ws.send = capture
+    ws.__aiter__ = MagicMock(return_value=async_iter([
+        json.dumps({"type": "REGISTERED", "machine_id": "m-uuid-1"}),
+        json.dumps({"type": "SET_CONFIG", "config": {"toil": {"api_key": "hacked"}}}),
+    ]))
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+
+    assert "hacked" not in ini.read_text()
+    assert any(m["type"] == "CONFIG_REJECTED" for m in messages_sent)
+
+
+@pytest.mark.asyncio
+async def test_forced_upgrade_bypasses_auto_upgrade_off():
+    client = _make_client(auto_upgrade=False)
+    ws = AsyncMock()
+    sent = []
+    async def capture(msg): sent.append(json.loads(msg))
+    ws.send = capture
+
+    with patch.object(client._cmd_mgr, "begin_drain") as drain:
+        await client._schedule_upgrade(ws, {
+            "type": "UPGRADE_AVAILABLE", "force": True,
+            "version": "1.0.1", "url": "https://x/modric-agent-1.0.1.tar.gz",
+        })
+    # force => did not skip; started the drain/upgrade path
+    drain.assert_called_once()
+    assert not any(m["type"] == "UPGRADE_SKIPPED" for m in sent)
 
 
 @pytest.mark.asyncio

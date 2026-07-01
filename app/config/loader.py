@@ -37,6 +37,7 @@ def load_config(path: str | None = None) -> dict:
     machine_version_file = os.getenv("MODRIC_AGENT_MACHINE_VERSION_FILE", machine_version_file)
 
     return {
+        "config_path": str(config_path),
         "wss_url": cfg["toil"]["wss_url"],
         "api_key": cfg["toil"]["api_key"],
         "name": agent_section.get("name", ""),
