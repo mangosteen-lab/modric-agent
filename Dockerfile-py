@@ -1,6 +1,9 @@
 # Modric Agent — Python 3.12 container image.
 #
-# Build:  docker build -f Dockerfile-py -t modric-agent:latest .
+# Build:  docker build -f Dockerfile-py \
+#           --build-arg MODRIC_AGENT_COMMIT=$(git rev-parse --short HEAD) \
+#           -t modric-agent:latest .
+#         (`make docker-build` passes the commit automatically.)
 #
 # Configure via environment (rendered to config.ini by app.bootstrap):
 #   docker run -d --name modric-agent \
@@ -38,9 +41,16 @@ COPY pyproject.toml ./
 COPY app ./app
 COPY conf/config.example.ini ./conf/config.example.ini
 
+# Git commit baked in at build time. There is no .git in the image (it's excluded
+# by .dockerignore), so `git rev-parse` can't work at runtime — version.py reads
+# this env var first and reports it to Toil for the machine's "commit". Empty by
+# default (behaves as before); pass --build-arg to populate it.
+ARG MODRIC_AGENT_COMMIT=""
+
 # Logs go to stdout/stderr; unbuffered so `docker logs` is live.
 ENV PYTHONUNBUFFERED=1 \
-    MODRIC_AGENT_CONFIG=/app/conf/config.ini
+    MODRIC_AGENT_CONFIG=/app/conf/config.ini \
+    MODRIC_AGENT_COMMIT=${MODRIC_AGENT_COMMIT}
 
 # Bootstrap renders config.ini from env vars (if provided), then runs the agent.
 CMD ["python", "-m", "app.bootstrap"]

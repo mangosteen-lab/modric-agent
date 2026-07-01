@@ -4,6 +4,10 @@
 IMAGE ?= modric-agent:latest
 NAME  ?= modric-agent
 CONFIG ?= $(CURDIR)/conf/config.ini
+# Short git commit baked into the image so the containerized agent reports it to
+# Toil (no .git in the image ⇒ git rev-parse can't run at runtime). Empty if this
+# tree isn't a git checkout.
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 
 help:
 	@echo "Usage: make <target>"
@@ -67,7 +71,7 @@ build:
 	done
 
 docker-build:
-	docker build -f Dockerfile-py -t $(IMAGE) .
+	docker build -f Dockerfile-py --build-arg MODRIC_AGENT_COMMIT=$(COMMIT) -t $(IMAGE) .
 
 docker-run:
 	@test -f "$(CONFIG)" || { echo "Missing $(CONFIG) — copy conf/config.example.ini and edit it."; exit 1; }
