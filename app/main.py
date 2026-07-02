@@ -32,6 +32,7 @@ def run_agent() -> None:
         command_mgr=cmd_mgr,
         machine_version_store=version_store,
         config_path=cfg["config_path"],
+        log_file=cfg["log_file"],
     )
     logger.info("Starting Modric Agent - connecting to %s (logging to %s)",
                 cfg["wss_url"], log_path)

@@ -127,6 +127,20 @@ def test_write_config_rejects_toil_and_bad_values(tmp_path):
         write_config(ini, {"logging": {"level": "LOUD"}})
 
 
+def test_read_log_tail(tmp_path):
+    from app.logging_config import read_log_tail
+
+    log = tmp_path / "agent.log"
+    assert read_log_tail(log, 1000) == ("", 0, False)   # missing file
+
+    log.write_bytes(b"0123456789" * 10)   # 100 bytes
+    text, size, truncated = read_log_tail(log, 1000)
+    assert size == 100 and truncated is False and len(text) == 100
+
+    text, size, truncated = read_log_tail(log, 20)      # only the last 20 bytes
+    assert size == 100 and truncated is True and text == "0123456789" * 2
+
+
 def test_legacy_config_loads_with_defaults(tmp_path):
     """A pre-existing minimal config.ini (no rest/machine_version keys) still loads,
     with every newer key falling back to its default — the backward-compat guarantee."""

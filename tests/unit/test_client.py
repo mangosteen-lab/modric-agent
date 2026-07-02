@@ -292,6 +292,47 @@ async def test_wheel_upgrade_uses_detached_installer():
 
 
 @pytest.mark.asyncio
+async def test_get_agent_log_returns_tail(tmp_path):
+    log = tmp_path / "agent.log"
+    log.write_text("line1\nline2\nline3\n")
+    client = _make_client(log_file=str(log))
+
+    sent = []
+    ws = AsyncMock()
+    async def capture(msg): sent.append(json.loads(msg))
+    ws.send = capture
+    ws.__aiter__ = MagicMock(return_value=async_iter([
+        json.dumps({"type": "REGISTERED", "machine_id": "m-1"}),
+        json.dumps({"type": "GET_AGENT_LOG", "request_id": "r1", "name": "agent"}),
+    ]))
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+
+    reply = next(m for m in sent if m["type"] == "AGENT_LOG")
+    assert reply["request_id"] == "r1"
+    assert reply["data"] == "line1\nline2\nline3\n"
+    assert reply["truncated"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_agent_log_unknown_name_errors(tmp_path):
+    client = _make_client(log_file=str(tmp_path / "agent.log"))
+    sent = []
+    ws = AsyncMock()
+    async def capture(msg): sent.append(json.loads(msg))
+    ws.send = capture
+    ws.__aiter__ = MagicMock(return_value=async_iter([
+        json.dumps({"type": "REGISTERED", "machine_id": "m-1"}),
+        json.dumps({"type": "GET_AGENT_LOG", "request_id": "r1", "name": "../secret"}),
+    ]))
+    with patch("app.ws.client._collect_sysinfo", return_value=_fake_sysinfo()):
+        await client._do_session(ws)
+
+    reply = next(m for m in sent if m["type"] == "AGENT_LOG")
+    assert "error" in reply and "data" not in reply
+
+
+@pytest.mark.asyncio
 async def test_register_machine_version_defaults_to_zero_without_store():
     client = _make_client()   # no machine_version_store
 

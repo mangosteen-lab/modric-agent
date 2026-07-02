@@ -6,6 +6,7 @@ import platform
 import socket
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import psutil
 import websockets
@@ -76,6 +77,7 @@ class SoilWSClient:
                  upgrade_mgr: CUpgradeManager | None = None,
                  machine_version_store: MachineVersionStore | None = None,
                  config_path: str | None = None,
+                 log_file: str | None = None,
                  exit_func: Callable[[int], None] | None = None):
         self.wss_url  = wss_url
         self.api_key  = api_key
@@ -87,6 +89,9 @@ class SoilWSClient:
         self._machine_version_store = machine_version_store
         # config.ini path, so an operator "Edit config" (SET_CONFIG) can rewrite it.
         self._config_path = config_path
+        # Main agent log path; siblings (e.g. upgrade.log) resolve from its directory.
+        # Lets Toil fetch this machine's logs on demand (GET_AGENT_LOG).
+        self._log_file = log_file
         raw_version = version if version is not None else get_agent_version()
         self.version  = str(raw_version)
         self.version_code = version_to_code(raw_version)
@@ -171,6 +176,56 @@ class SoilWSClient:
         self._cmd_mgr.begin_drain()
         self._upgrade_task = asyncio.create_task(
             self._restart_when_idle(ws, "config updated"))
+
+    def _log_path_for(self, name: str) -> Path | None:
+        """Resolve a log name to a concrete path. Whitelisted so a request can't read
+        arbitrary files: 'agent' is the main log, 'upgrade' its sibling upgrade.log."""
+        if not self._log_file:
+            return None
+        base = Path(self._log_file)
+        if name == "agent":
+            return base
+        if name == "upgrade":
+            return base.parent / "upgrade.log"
+        return None
+
+    async def _handle_get_agent_log(self, ws, msg: dict):
+        """Toil-requested log fetch (machines panel "Logs"). Reply with the tail of the
+        named log, keyed by request_id so the server can match the awaiting request."""
+        from app.logging_config import read_log_tail
+
+        request_id = msg.get("request_id")
+        name = msg.get("name", "agent")
+        # Bound the payload; honor a smaller requested cap, clamp a larger one.
+        max_bytes = min(int(msg.get("max_bytes") or 1_000_000), 10_000_000)
+
+        path = self._log_path_for(name)
+        if path is None:
+            await ws.send(json.dumps({
+                "type":       "AGENT_LOG",
+                "request_id": request_id,
+                "machine_id": self.machine_id,
+                "name":       name,
+                "error":      f"unknown log '{name}'",
+            }))
+            return
+        try:
+            text, size, truncated = read_log_tail(path, max_bytes)
+        except Exception as exc:
+            await ws.send(json.dumps({
+                "type": "AGENT_LOG", "request_id": request_id,
+                "machine_id": self.machine_id, "name": name, "error": str(exc),
+            }))
+            return
+        await ws.send(json.dumps({
+            "type":       "AGENT_LOG",
+            "request_id": request_id,
+            "machine_id": self.machine_id,
+            "name":       name,
+            "data":       text,
+            "size":       size,
+            "truncated":  truncated,
+        }))
 
     async def _restart_when_idle(self, ws, reason: str):
         """Drain in-flight commands, then exit 75 so the supervisor relaunches the
@@ -264,6 +319,9 @@ class SoilWSClient:
 
             elif msg_type == "SET_CONFIG":
                 await self._handle_set_config(ws, msg)
+
+            elif msg_type == "GET_AGENT_LOG":
+                await self._handle_get_agent_log(ws, msg)
 
             elif msg_type == "UPGRADE_REQUIRED":
                 if msg.get("url") or msg.get("artifact_url"):

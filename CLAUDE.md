@@ -51,7 +51,7 @@ Container builds (`Dockerfile-py`) render `config.ini` from `MODRIC_*` env vars 
 ## Protocol contract (keep in sync with Toil)
 
 The message types and field names (`REGISTER`, `EXECUTE`, `CHUNK`, `COMMAND_DONE`, `KILL`,
-`SET_MACHINE_VERSION`, `SET_CONFIG`, command ids, script types) are a contract with
+`SET_MACHINE_VERSION`, `SET_CONFIG`, `GET_AGENT_LOG`, command ids, script types) are a contract with
 `modric/Toil/app/ws/soil_ws.py` and `modric/Toil/app/core/remote_execute.py`. Change both sides
 together.
 
