@@ -2,6 +2,43 @@
 
 `modric-agent` is the outbound worker for Modric/Toil. It connects to the Toil WebSocket endpoint, registers the local machine, receives commands, executes scripts, and streams status and logs back to Toil.
 
+## Install (one-liner)
+
+Fetches the latest release, installs to a system path, prompts for the Toil connection, and registers the OS service.
+
+**Linux / macOS** — installs to `/opt/mangosteen/modric-agent`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mangosteen-lab/modric-agent/master/scripts/install.sh | sudo bash
+```
+
+**Windows** (elevated PowerShell) — installs to `C:\Program Files\mangosteen\modric-agent`, and asks whether to run as a background service or in interactive-desktop mode (for GUI job steps):
+
+```powershell
+irm https://raw.githubusercontent.com/mangosteen-lab/modric-agent/master/scripts/install.ps1 | iex
+```
+
+Non-interactive (CI/automation): pre-set the `MODRIC_*` env vars and no prompts are shown:
+
+```bash
+MODRIC_TOIL_WSS_URL=wss://toil/ws/soil MODRIC_TOIL_API_KEY=key \
+  MODRIC_AGENT_LABELS="template=LINUX_ABA" sudo -E bash install.sh
+```
+
+| Env var | Purpose | Default |
+| --- | --- | --- |
+| `MODRIC_TOIL_WSS_URL` | Toil WebSocket URL (required) | — |
+| `MODRIC_TOIL_API_KEY` | registration API key (required) | — |
+| `MODRIC_AGENT_NAME` | machine name | hostname |
+| `MODRIC_AGENT_LABELS` | `key=value, …` selectors | (empty) |
+| `MODRIC_AGENT_CAPACITY` | max concurrent jobs | `10` |
+| `MODRIC_AGENT_UPGRADE_CHANNEL` / `MODRIC_AGENT_AUTO_UPGRADE` | upgrade channel / toggle | `stable` / `true` |
+| `MODRIC_AGENT_HOME` | install dir | per-OS path above |
+| `MODRIC_AGENT_TARBALL_URL` | pin a release / internal mirror | latest release |
+| `FORCE_CONFIG` | overwrite an existing `config.ini` | (keep) |
+
+The steps below describe a manual/from-source setup instead.
+
 ## Requirements
 
 - Python 3.11+

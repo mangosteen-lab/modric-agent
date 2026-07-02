@@ -20,6 +20,13 @@ uv run pytest tests/test_x.py::test_name   # single test (asyncio_mode = auto)
 Config comes from `conf/config.ini` (copy `conf/config.example.ini`) or `MODRIC_AGENT_CONFIG`.
 Container builds (`Dockerfile-py`) render `config.ini` from `MODRIC_*` env vars via `app/bootstrap.py`.
 
+**Install/release scripts** (`scripts/`): `install.sh` / `install.ps1` are the hosted one-liners
+(`curl … | sudo bash` / `irm … | iex`) — they fetch the latest release, extract to
+`/opt/mangosteen/modric-agent` (Linux) or `C:\Program Files\mangosteen\modric-agent` (Windows), `uv
+sync`, prompt for the `MODRIC_*` settings (skipped when set in env), render `config.ini` via
+`app.bootstrap.render_config`, and run `service install`. `release.sh` (`make release VERSION=x.y.z`)
+builds the source tarball + `SHA256SUMS` and publishes the GitHub release the installers pull from.
+
 ## Architecture
 
 `app/main.py` → `app/ws/client.py` opens the WebSocket to `[toil] wss_url`, authenticates with

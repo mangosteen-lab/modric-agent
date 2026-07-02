@@ -73,18 +73,20 @@ if [ "$IN_TAR" != "$VERSION" ]; then
 fi
 SHA256="$(python3 -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$TARBALL")"
 echo ">> Verified tarball version = $IN_TAR"
+# SHA256SUMS asset — the installer (scripts/install.sh/.ps1) verifies the tarball against it.
+( cd dist && printf '%s  %s\n' "$SHA256" "$(basename "$TARBALL")" > SHA256SUMS )
 
 # --- 3. tag HEAD, push the commit + tag ------------------------------------
 git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || git tag "$TAG"
 git push origin HEAD
 git push origin "$TAG"
 
-# --- 4. create the release (or upload the asset if it already exists) ------
+# --- 4. create the release (or upload the assets if it already exists) ------
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-  echo ">> Release $TAG exists; uploading/overwriting the tarball."
-  gh release upload "$TAG" "$TARBALL" --repo "$REPO" --clobber
+  echo ">> Release $TAG exists; uploading/overwriting the assets."
+  gh release upload "$TAG" "$TARBALL" dist/SHA256SUMS --repo "$REPO" --clobber
 else
-  gh release create "$TAG" "$TARBALL" \
+  gh release create "$TAG" "$TARBALL" dist/SHA256SUMS \
     --repo "$REPO" \
     --title "modric-agent $VERSION" \
     --notes "${NOTES:-modric-agent $VERSION}"
